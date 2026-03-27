@@ -1,7 +1,7 @@
 // test-ingest.js
 
 
-const testRepo = "https://github.com/octocat/Spoon-Knife"; // You can use any public repo
+const testRepo = "https://github.com/expressjs/express"; // You can use any public repo
 
 async function runTest() {
     console.log(`🚀 Testing RepoMind ingestion for: ${testRepo}`);

@@ -49,7 +49,7 @@ app.post("/ask", async (req, res) => {
     const index = pc.Index("repo-mind");
     const queryResponse = await index.query({
       vector: queryVector,
-      topK: 3,
+      topK: 10,
       includeMetadata: true,
     });
 
@@ -106,23 +106,23 @@ app.post("/ask", async (req, res) => {
 });
 
 app.post("/ingest", async (req, res) => {
-  const { repoUrl } = req.body;
-  console.log("Ingesting:", repoUrl);
+    const { repoUrl } = req.body;
+    try {
+        const documents = await processRepository(repoUrl);
 
-  try {
-    const documents = await processRepository(repoUrl);
-    console.log(`Found ${documents.length} code chunks.`);
+        // 🛡️ Safety Check: Ensure documents actually exists
+        if (!documents || documents.length === 0) {
+            return res.status(400).json({ error: "No documents were found. Check the Repo URL and Branch name." });
+        }
 
-    await saveToVectorStore(documents);
+        console.log(`📄 Found ${documents.length} code chunks.`);
+        await saveToVectorStore(documents); 
 
-    res.json({
-      message: "Repo Mind updated!",
-      count: documents.length,
-    });
-  } catch (error) {
-    console.error("Ingest Error:", error);
-    res.status(500).json({ error: error.message });
-  }
+        res.json({ message: "Repo Mind updated!", count: documents.length });
+    } catch (error) {
+        console.error("❌ Ingest Error:", error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 const PORT = 3000;

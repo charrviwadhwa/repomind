@@ -8,6 +8,8 @@ const model = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
 const index = pc.Index("repo-mind");
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 export const saveToVectorStore = async (docs) => {
   try {
     if (!Array.isArray(docs) || docs.length === 0) {
@@ -16,18 +18,17 @@ export const saveToVectorStore = async (docs) => {
     }
 
     const vectors = [];
-    console.log(`Debugging ${docs.length} chunks...`);
+    console.log(`🚀 Starting embedding for ${docs.length} chunks...`);
 
+    // 1. Generate all embeddings first
     for (const [i, doc] of docs.entries()) {
-      console.log(`--- Chunk ${i} Start ---`);
-
+        await sleep(500);
+        try {
       const result = await model.embedContent({
         content: { parts: [{ text: doc?.pageContent ?? "" }] },
         taskType: TaskType.RETRIEVAL_DOCUMENT,
         outputDimensionality: 3072,
       });
-
-      console.dir(result, { depth: null });
 
       const values = result?.embedding?.values;
 
@@ -40,27 +41,36 @@ export const saveToVectorStore = async (docs) => {
             source: doc?.metadata?.source ?? "unknown",
           },
         });
-        console.log(`Chunk ${i} embedded successfully.`);
-      } else {
-        console.log(`Chunk ${i} failed to generate values.`);
-      }
+        if (i % 10 === 0) console.log(`✅ Embedded ${i} chunks...`);
+      
+    }
+    }   catch{
+        if (err.status === 429) {
+                    console.log("⚠️ Rate limit hit! Sleeping for 5 seconds...");
+                    await sleep(5000); // Wait longer if we hit a wall
+                    i--; // Retry this same chunk
+                } else {
+                    console.error(`❌ Skip Chunk ${i}:`, err.message);
+                }
+            }
     }
 
-    console.log(`Final Vector Array Count: ${vectors.length}`);
+    console.log(`✅ Generated ${vectors.length} vectors. Starting Pinecone push...`);
 
-    if (vectors.length === 0) {
-      throw new Error("No valid vectors were generated, skipping Pinecone upsert.");
+    // 2. BATCH UPSERT (The scaling fix)
+    const BATCH_SIZE = 50; 
+    for (let i = 0; i < vectors.length; i += BATCH_SIZE) {
+        const batch = vectors.slice(i, i + BATCH_SIZE);
+        
+        // Pinecone v7 uses { records: [...] }
+        await index.upsert({ records: batch });
+        
+        console.log(`Successfully pushed batch ${Math.floor(i / BATCH_SIZE) + 1}`);
     }
 
-    console.log("Pushing to Pinecone...");
-
-    // Pinecone SDK v7 expects an object: { records: [...] }
-    const upsertResponse = await index.upsert({ records: vectors });
-
-    console.log("Pinecone Response:", upsertResponse);
-    console.log("SUCCESS!");
+    console.log("🚀 SUCCESS: Large repo is now indexed!");
   } catch (error) {
-    console.error("Sync Error:", error);
+    console.error("❌ Sync Error:", error);
     throw error;
   }
 };
