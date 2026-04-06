@@ -7,9 +7,11 @@ import { GoogleGenerativeAI, TaskType } from "@google/generative-ai";
 import { processRepository } from "./engine.js";
 import { saveToVectorStore } from "./db.js";
 
+
 const app = express();
 app.use(cors());
 app.use(express.json());
+console.log("🛠️ DEBUG: API Key ends with:", process.env.GOOGLE_API_KEY.slice(-4));
 const CHAT_MODEL_CANDIDATES = [
   process.env.GEMINI_CHAT_MODEL,
   "gemini-2.5-flash",
@@ -36,7 +38,7 @@ app.post("/ask", async (req, res) => {
     const result = await embeddingModel.embedContent({
       content: { parts: [{ text: question }] },
       taskType: TaskType.RETRIEVAL_QUERY,
-      outputDimensionality: 3072,
+      outputDimensionality: 768
     });
 
     const queryVector = result?.embedding?.values;
@@ -106,19 +108,29 @@ app.post("/ask", async (req, res) => {
 });
 
 app.post("/ingest", async (req, res) => {
-    const { repoUrl } = req.body;
+    // 🚀 Extract branch from req.body, defaulting to "main"
+    const { repoUrl, branch = "main" } = req.body; 
+    
     try {
-        const documents = await processRepository(repoUrl);
+        console.log(`📂 Ingesting: ${repoUrl} (Branch: ${branch})`);
+        
+        // Pass both repoUrl AND branch to your engine
+        const documents = await processRepository(repoUrl, branch);
 
-        // 🛡️ Safety Check: Ensure documents actually exists
         if (!documents || documents.length === 0) {
-            return res.status(400).json({ error: "No documents were found. Check the Repo URL and Branch name." });
+            return res.status(400).json({ 
+                error: "No documents were found. Check the Repo URL and Branch name." 
+            });
         }
 
         console.log(`📄 Found ${documents.length} code chunks.`);
         await saveToVectorStore(documents); 
 
-        res.json({ message: "Repo Mind updated!", count: documents.length });
+        res.json({ 
+            message: "Repo Mind updated!", 
+            count: documents.length,
+            branch: branch 
+        });
     } catch (error) {
         console.error("❌ Ingest Error:", error);
         res.status(500).json({ error: error.message });

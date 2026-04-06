@@ -1,7 +1,5 @@
-// test-ingest.js
 
-
-const testRepo = "https://github.com/expressjs/express"; // You can use any public repo
+const testRepo = "https://github.com/charrviwadhwa/Gitdash"; 
 
 async function runTest() {
     console.log(`🚀 Testing RepoMind ingestion for: ${testRepo}`);
@@ -10,7 +8,10 @@ async function runTest() {
         const response = await fetch('http://127.0.0.1:3000/ingest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ repoUrl: testRepo })
+            body: JSON.stringify({ 
+                repoUrl: testRepo,
+                branch: "main" 
+            })
         });
 
         const data = await response.json();

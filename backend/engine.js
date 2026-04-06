@@ -1,49 +1,46 @@
 import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import "dotenv/config";
 
-// 1. Initialize Gemini
-const model = new ChatGoogleGenerativeAI({
-  model: "gemini-2.5-flash", // Flash is faster/cheaper for summaries
-  maxOutputTokens: 2048,
-});
-
-export const processRepository = async (repoUrl) => {
+// 🚀 ADDED 'branch' parameter here with a default value
+export const processRepository = async (repoUrl, branch = "main") => {
   try {
-    console.log("--- Loading Repository ---");
+    console.log(`--- Loading Repository: ${repoUrl} (Branch: ${branch}) ---`);
     
     const loader = new GithubRepoLoader(repoUrl, {
-  accessToken: process.env.GITHUB_TOKEN,
-  branch: "master",
-  recursive: true,
-  unknown: "warn",
-  // 🚀 Expanded ignore list for "Big Repos"
-  ignorePaths: [
-    "node_modules", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-    ".git", ".github", ".vscode", "dist", "build", "out",
-    "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.ico", // No images!
-    "*.pdf", "*.zip", "*.tar.gz", "*.map",
-    "coverage", ".next", ".expo"
-  ],
-});
+      accessToken: process.env.GITHUB_TOKEN,
+      branch: branch, // ✅ Now 'branch' is defined!
+      recursive: true,
+      unknown: "warn",
+      ignorePaths: [
+        "node_modules", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        ".git", ".github", ".vscode", "dist", "build", "out",
+        "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.ico",
+        "*.pdf", "*.zip", "*.tar.gz", "*.map",
+        "coverage", ".next", ".expo"
+      ],
+    });
 
     const docs = await loader.load();
+    
+    if (docs.length === 0) {
+        console.warn("⚠️ No files found. Double-check the branch name.");
+        return [];
+    }
+
     console.log(`Fetched ${docs.length} files.`);
 
-    // 2. Split Code into Chunks
-    // We use a specific splitter for code to keep functions together
-    // 💡 Change this to a general splitter if the repo is mixed-language
-const splitter = new RecursiveCharacterTextSplitter({
-  chunkSize: 1500, // Reduced slightly to keep Gemini context window "roomy"
-  chunkOverlap: 200,
-});
+    const splitter = new RecursiveCharacterTextSplitter({
+      chunkSize: 1000,
+      chunkOverlap: 200,
+    });
 
     const splitDocs = await splitter.splitDocuments(docs);
     console.log(`Created ${splitDocs.length} code chunks.`);
 
     return splitDocs;
   } catch (error) {
-    console.error("Error processing repo:", error);
+    console.error("Error processing repo:", error.message);
+    throw error; // Re-throw so index.js can catch it
   }
 };

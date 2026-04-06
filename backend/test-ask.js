@@ -7,7 +7,7 @@ async function ask() {
             headers: { 'Content-Type': 'application/json' },
             // 🚀 Asking a deep architectural question about Express
             body: JSON.stringify({ 
-                question: "Search for the function 'proto.handle' or the code that iterates through 'stack'. In which file is the sequential execution of middleware actually coded?" 
+                question: "What tech stack is used here?"
             })
         });
         
