@@ -5,7 +5,7 @@ async function ask() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        question: "What is this app about?",
+        question: "What is this spotlight app about?",
       }),
     });
 

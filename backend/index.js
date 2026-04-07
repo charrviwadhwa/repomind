@@ -63,9 +63,12 @@ app.post("/ask", async (req, res) => {
     
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     
-    const prompt = `Use the following code context to answer the question.
-    CONTEXT: ${context}
-    QUESTION: ${question}`;
+    const prompt = `You are a helpful code assistant. Use the following code context to answer the question. 
+Always format your response using clean Markdown. Use ## Headings, bullet points, and **bold text** to make it highly readable. Do not return giant blocks of text.
+
+CONTEXT: ${context}
+QUESTION: ${question}`;
+   
 
     const result = await model.generateContent(prompt);
     const response = await result.response;

@@ -1,155 +1,182 @@
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Code2, 
-  Search, 
-  Bug, 
-  GitBranch, 
-  Mic, 
-  Send, 
-  Terminal,
-  Zap
-} from "lucide-react";
-import { useChat } from "../hooks/chat";
-import MessageList from "./MessageList"; 
+import { useState, useEffect, useRef } from "react";
+import { Send, Terminal, Copy } from "lucide-react";
+import ReactMarkdown from 'react-markdown';
 
-const Dashboard = () => {
+const Dashboard = ({ activeChat }) => {
   const [input, setInput] = useState("");
-  const { askQuestion, messages, loading } = useChat();
+  const [messages, setMessages] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+  const [copiedIndex, setCopiedIndex] = useState(null);
 
-  const handleSend = () => {
-    if (!input.trim() || loading) return;
-    askQuestion(input);
-    setInput("");
+  // Auto-scroll to bottom of chat
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+  const handleCopy = (text, index) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000); 
   };
 
-  const cards = [
-    { 
-      icon: <Search className="text-green-400" />, 
-      title: "Analyze Logic", 
-      desc: "Find where specific functions are defined or explain complex logic." 
-    },
-    { 
-      icon: <Bug className="text-green-400" />, 
-      title: "Identify Bugs", 
-      desc: "Scan the current repository for potential vulnerabilities or logic errors." 
-    },
-    { 
-      icon: <Zap className="text-green-400" />, 
-      title: "Refactor Code", 
-      desc: "Get suggestions on how to optimize or clean up specific components." 
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+  useEffect(() => {
+    if (activeChat) {
+      const savedMessages = localStorage.getItem(`repomind_messages_${activeChat.id}`);
+      
+      if (savedMessages) {
+        // If we have history for this repo, load it
+        setMessages(JSON.parse(savedMessages));
+      } else {
+        // Otherwise, show the initial greeting
+        setMessages([{ 
+          role: "ai", 
+          content: `Hello! I'm connected to **${activeChat.title}**. What would you like to know about this codebase?` 
+        }]);
+      }
+    } else {
+      setMessages([]);
     }
-  ];
+  }, [activeChat]);
+
+  useEffect(() => {
+    if (activeChat && messages.length > 0) {
+      localStorage.setItem(`repomind_messages_${activeChat.id}`, JSON.stringify(messages));
+    }
+  }, [messages, activeChat]);
+  
+
+  const handleSend = async () => {
+    if (!input.trim() || !activeChat) return;
+
+    const userMessage = input;
+    setInput("");
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setIsLoading(true);
+
+    try {
+      const response = await fetch("http://localhost:3000/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Crucial: Send the namespace tied to the active chat
+        body: JSON.stringify({ 
+          question: userMessage, 
+          namespace: activeChat.id 
+        }),
+      });
+
+      const data = await response.json();
+      
+      setMessages((prev) => [...prev, { role: "ai", content: data.answer || "Sorry, I couldn't process that." }]);
+    } catch (error) {
+      setMessages((prev) => [...prev, { role: "ai", content: "Error connecting to the server." }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (!activeChat) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-zinc-500">
+        <Terminal size={48} className="mb-4 opacity-20" />
+        <h2 className="text-xl font-medium text-white mb-2">Welcome to RepoMind</h2>
+        <p className="text-sm">Select a repository from the sidebar or ingest a new one to start.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex-1 flex flex-col items-center relative w-full h-full overflow-hidden bg-[#0F0F0F]">
+    <div className="flex-1 flex flex-col h-full z-10 relative">
       
-      {/* 🚀 Main Content Area */}
-      <div className="flex-1 w-full flex flex-col items-center overflow-y-auto custom-scrollbar pt-10">
-        
-        <AnimatePresence mode="wait">
-          {messages.length === 0 ? (
-            /* --- VIEW 1: EMPTY STATE --- */
-            <motion.div 
-              key="empty-state"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="flex-1 flex flex-col items-center justify-center p-6 w-full max-w-4xl"
-            >
-              {/* Header */}
-              <motion.div className="text-center mb-12">
-                <div className="w-16 h-16 bg-green-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-green-500/20 shadow-[0_0_30px_rgba(74,222,128,0.1)]">
-                  <Code2 size={32} className="text-green-400" />
-                </div>
-                <h1 className="text-5xl font-bold text-white mb-4 tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-zinc-500">
-                  Codebase Intelligence.
-                </h1>
-                <p className="text-zinc-500 text-sm max-w-md mx-auto leading-relaxed">
-                  Ready to analyze your indexed repository. Ask me to explain files, find bugs, or suggest improvements.
-                </p>
-              </motion.div>
-
-              {/* Grid Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full mb-12 px-4">
-                {cards.map((card, i) => (
-                  <motion.div
-                    key={i}
-                    whileHover={{ y: -5, backgroundColor: "rgba(255,255,255,0.03)" }}
-                    className="bg-[#161616] border border-white/5 p-6 rounded-2xl cursor-pointer transition-all hover:border-green-500/30"
-                  >
-                    <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center mb-4 border border-white/5">
-                      {card.icon}
-                    </div>
-                    <h3 className="text-sm font-semibold text-zinc-100 mb-2">{card.title}</h3>
-                    <p className="text-[11px] text-zinc-500 leading-normal">{card.desc}</p>
-                  </motion.div>
-                ))}
-              </div>
-
-              {/* Status Indicator */}
-              <div className="flex items-center gap-2 text-[11px] text-zinc-600 bg-zinc-900/50 px-4 py-2 rounded-full border border-white/5">
-                <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                Index Ready: <span className="text-zinc-400">Gemini-1.5-Flash</span>
-              </div>
-            </motion.div>
-          ) : (
-            /* --- VIEW 2: CHAT HISTORY --- */
-            <motion.div 
-              key="chat-list"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="w-full max-w-4xl px-4"
-            >
-              <MessageList messages={messages} />
-            </motion.div>
-          )}
-        </AnimatePresence>
+      {/* Dynamic Header */}
+      <div className="h-16 border-b border-white/5 flex items-center px-8 bg-[#0A0A0A]/50 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <h3 className="font-medium text-zinc-200">
+            {activeChat.isRepo ? "Connected to: " : ""}<span className="text-white font-bold">{activeChat.title}</span>
+          </h3>
+        </div>
       </div>
 
-      {/* --- 🚀 GLASSMORPHIC BLACK INPUT BAR --- */}
-      <div className="w-full max-w-3xl px-4 pb-10 pt-4 relative">
-        <motion.div 
-          layout
-          className="relative bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-2 flex items-center gap-3 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.8)]"
-        >
-          {/* Subtle Glow Effect */}
-          <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-green-500/20 to-transparent" />
+      {/* Chat Messages Area */}
+      <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+        <div className="max-w-3xl mx-auto space-y-6">
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              
+              {/* Message Bubble container */}
+              <div className="relative group max-w-[80%]">
+                
+                {/* The actual message content */}
+                <div 
+                  className={`p-4 rounded-2xl text-sm leading-relaxed ${
+                    msg.role === "user" 
+                      ? "bg-green-500 text-black font-medium" 
+                      : "bg-[#141414] border border-white/5 text-zinc-300 prose prose-invert max-w-none"
+                  }`}
+                >
+                  {msg.role === "user" ? (
+                    msg.content
+                  ) : (
+                    /* Render AI text as Markdown */
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  )}
+                </div>
+
+                {/* The Copy Button (Only show for AI messages) */}
+                {msg.role === "ai" && (
+                  <button
+                    onClick={() => handleCopy(msg.content, idx)}
+                    className="absolute -right-10 top-2 p-2 bg-[#141414] border border-white/10 text-zinc-400 hover:text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Copy response"
+                  >
+                    {copiedIndex === idx ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                  </button>
+                )}
+
+              </div>
+            </div>
+          ))}
           
-          <div className="w-10 h-10 bg-zinc-800/50 rounded-xl flex items-center justify-center shrink-0 border border-white/5">
-             <Terminal size={18} className="text-zinc-400" />
-          </div>
-          
-          <input 
-            type="text" 
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="bg-[#141414] border border-white/5 p-4 rounded-2xl flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" />
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+      </div>
+
+      {/* Input Area */}
+      <div className="p-6 max-w-4xl mx-auto w-full">
+        <div className="relative flex items-center">
+          <input
+            type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder={loading ? "Scanning repository..." : "Ask RepoMind about your code..."}
-            disabled={loading}
-            className="flex-1 bg-transparent border-none outline-none text-white text-sm placeholder:text-zinc-600 disabled:cursor-not-allowed"
+            placeholder="Ask RepoMind about your code..."
+            className="w-full bg-[#141414] border border-white/10 rounded-2xl py-4 pl-6 pr-16 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-green-500/50 transition-all shadow-xl"
           />
-
-          <div className="flex items-center gap-3 pr-2 border-l border-white/5 pl-3">
-            <button 
-              onClick={handleSend}
-              disabled={loading || !input.trim()}
-              className="bg-white p-2.5 rounded-xl text-black hover:bg-green-400 transition-all disabled:opacity-20 disabled:grayscale shadow-[0_0_15px_rgba(255,255,255,0.1)] active:scale-95"
-            >
-              {loading ? (
-                <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Send size={18} />
-              )}
-            </button>
-          </div>
-        </motion.div>
-        
-        <p className="text-center mt-4 text-[9px] text-zinc-700 uppercase tracking-[0.2em] font-medium">
-          Powered by Gemini • Context-Aware Code Analysis
+          <button
+            onClick={handleSend}
+            disabled={isLoading || !input.trim()}
+            className="absolute right-3 p-2 bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white rounded-xl transition-all disabled:opacity-50"
+          >
+            <Send size={18} />
+          </button>
+        </div>
+        <p className="text-center text-[10px] text-zinc-600 mt-3 font-medium tracking-wide">
+          POWERED BY GEMINI • CONTEXT-AWARE CODE ANALYSIS
         </p>
       </div>
-
+      
     </div>
   );
 };
