@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import cors from "cors";
 import "dotenv/config";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
@@ -6,101 +6,76 @@ import { Pinecone } from "@pinecone-database/pinecone";
 import { GoogleGenerativeAI, TaskType } from "@google/generative-ai";
 import { processRepository } from "./engine.js";
 import { saveToVectorStore } from "./db.js";
-
+import { execSync } from "child_process";
+import fs from "fs";
+import path from "path";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-console.log("🛠️ DEBUG: API Key ends with:", process.env.GOOGLE_API_KEY.slice(-4));
-const CHAT_MODEL_CANDIDATES = [
+console.log("DEBUG: API Key ends with:", process.env.GOOGLE_API_KEY.slice(-4));
+const chatModel = [
   process.env.GEMINI_CHAT_MODEL,
   "gemini-2.5-flash",
   "gemini-2.0-flash",
   "gemini-1.5-flash",
 ].filter(Boolean);
 
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+const index = pc.Index("repo-mind");
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
+
 app.get("/", (req, res) => res.send("Server is alive!"));
 
 app.post("/ask", async (req, res) => {
-  const { question } = req.body;
+  const { question, namespace } = req.body;
 
   try {
     if (!question || typeof question !== "string") {
       return res.status(400).json({ error: "A valid question is required." });
     }
 
-    console.log(`Querying: ${question}`);
-
-    // 1. Embed user query
-    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-    const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
-
-    const result = await embeddingModel.embedContent({
-      content: { parts: [{ text: question }] },
-      taskType: TaskType.RETRIEVAL_QUERY,
-      outputDimensionality: 768
-    });
-
-    const queryVector = result?.embedding?.values;
-    if (!Array.isArray(queryVector) || queryVector.length === 0) {
-      throw new Error("Failed to generate query embedding.");
+    
+    const lowerQ = question.toLowerCase().trim();
+    if (["hi", "hello", "hey"].includes(lowerQ)) {
+      return res.json({ answer: "Hello! I'm RepoMind. I can help you understand this codebase. What would you like to know?" });
     }
 
-    // 2. Query Pinecone
-    const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
-    const index = pc.Index("repo-mind");
-    const queryResponse = await index.query({
+    
+    const embResult = await embeddingModel.embedContent({
+      content: { parts: [{ text: question }] },
+      taskType: TaskType.RETRIEVAL_QUERY,
+      outputDimensionality: 768,
+    });
+    const queryVector = embResult?.embedding?.values;
+
+
+    const queryResponse = await index.namespace(namespace || "").query({
       vector: queryVector,
-      topK: 10,
+      topK: 7,
       includeMetadata: true,
     });
 
     const matches = queryResponse?.matches ?? [];
-    if (matches.length === 0) {
-      return res.json({ answer: "I could not find relevant code in the vector store yet." });
-    }
+    const context = matches.map((m) => m.metadata?.text).join("\n\n");
 
-    // 3. Build context from metadata
-    const context = matches
-      .map((m) => m?.metadata?.text)
-      .filter((text) => typeof text === "string" && text.trim().length > 0)
-      .join("\n\n");
+    
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    
+    const prompt = `Use the following code context to answer the question.
+    CONTEXT: ${context}
+    QUESTION: ${question}`;
 
-    if (!context) {
-      return res.json({ answer: "I found related records, but they did not contain usable text context." });
-    }
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
-    const prompt = `You are a Senior Developer. Use ONLY the following code context to answer the question.\n\nContext:\n${context}\n\nQuestion: ${question}`;
-    let response;
-    let lastError;
+    res.json({ 
+      answer: text,
+      sources: matches.map(m => m.metadata?.fileName).filter(Boolean)
+    });
 
-    // 4. Generate answer using Gemini chat model with graceful model fallback
-    for (const modelName of CHAT_MODEL_CANDIDATES) {
-      try {
-        const chatModel = new ChatGoogleGenerativeAI({
-          model: modelName,
-          apiKey: process.env.GOOGLE_API_KEY,
-        });
-        response = await chatModel.invoke(prompt);
-        break;
-      } catch (err) {
-        lastError = err;
-        console.warn(`Chat model ${modelName} failed, trying next model...`);
-      }
-    }
-
-    if (!response) {
-      throw lastError ?? new Error("Failed to generate answer with available chat models.");
-    }
-
-    const answerText =
-      typeof response?.content === "string"
-        ? response.content
-        : Array.isArray(response?.content)
-          ? response.content.map((p) => p?.text ?? "").join(" ").trim()
-          : "No answer generated.";
-
-    res.json({ answer: answerText || "No answer generated." });
   } catch (error) {
     console.error("Ask Error:", error);
     res.status(500).json({ error: error.message });
@@ -108,33 +83,53 @@ app.post("/ask", async (req, res) => {
 });
 
 app.post("/ingest", async (req, res) => {
-    // 🚀 Extract branch from req.body, defaulting to "main"
-    const { repoUrl, branch = "main" } = req.body; 
-    
-    try {
-        console.log(`📂 Ingesting: ${repoUrl} (Branch: ${branch})`);
-        
-        // Pass both repoUrl AND branch to your engine
-        const documents = await processRepository(repoUrl, branch);
+  const { repoUrl, branch = "main" } = req.body;
 
-        if (!documents || documents.length === 0) {
-            return res.status(400).json({ 
-                error: "No documents were found. Check the Repo URL and Branch name." 
-            });
-        }
+  const namespace = repoUrl
+    .split("github.com/")[1]
+    .replace(/\//g, "-")
+    .toLowerCase();
 
-        console.log(`📄 Found ${documents.length} code chunks.`);
-        await saveToVectorStore(documents); 
+  const tempDir = path.join(process.cwd(), "temp", `repo-${Date.now()}`);
 
-        res.json({ 
-            message: "Repo Mind updated!", 
-            count: documents.length,
-            branch: branch 
-        });
-    } catch (error) {
-        console.error("❌ Ingest Error:", error);
-        res.status(500).json({ error: error.message });
+  try {
+    if (!repoUrl) return res.status(400).json({ error: "No URL provided." });
+
+    const stats = await index.describeIndexStats();
+    if (stats.namespaces && stats.namespaces[namespace]) {
+      console.log(`Repo ${namespace} already exists. Skipping ingestion.`);
+      return res.json({
+        message: "Repository already indexed!",
+        namespace,
+        alreadyExists: true,
+      });
     }
+
+    console.log(`Ingesting new repo: ${namespace}`);
+
+    execSync(`git clone --branch ${branch} --depth 1 "${repoUrl}" "${tempDir}"`, { stdio: "inherit" });
+
+    const documents = await processRepository(tempDir);
+
+    if (!documents || documents.length === 0) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      return res.status(400).json({ error: "No code files found." });
+    }
+
+    await saveToVectorStore(documents, namespace);
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
+
+    res.json({
+      message: "Repo Mind updated!",
+      namespace,
+      count: documents.length,
+    });
+  } catch (error) {
+    if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+    console.error("Ingest Error:", error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 const PORT = 3000;
